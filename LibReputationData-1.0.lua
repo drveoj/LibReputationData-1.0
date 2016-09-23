@@ -271,5 +271,5 @@ function lib:GetNumObtainedReputations()
 end
 
 function lib:ForceUpdate()
-	RefreshAllFactions()
+	EnsureFactionsLoaded()
 end
