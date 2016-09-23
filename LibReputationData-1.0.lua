@@ -10,13 +10,13 @@ lib.callbacks = lib.callbacks or _G.LibStub("CallbackHandler-1.0"):New(lib)
 local timer
 local reputationChanges = {}
 local allFactions = {}
-local watchedFaction = nil
-
+local watchedFaction = 0
 
 -- blizzard api
 local GetFactionInfo                = _G.GetFactionInfo
 local GetFriendshipReputation		= _G.GetFriendshipReputation
 local IsFactionInactive 			= _G.IsFactionInactive
+local SetWatchedFactionIndex        = _G.SetWatchedFactionIndex
 
 -- lua api
 local select   = _G.select
@@ -44,6 +44,7 @@ local function CopyTable(tbl)
 	return copy;
 end
 
+
 local function GetFactionIndex(factionName)
 	for i = 1, #allFactions do
 		local name, _, _, _, _, _, _, _, _, _, _, _, _ = GetLocalFactionInfo(i); --added 2 or 3 _, to the end
@@ -65,6 +66,7 @@ local function GetFactionData(factionIndex)
 	if not name then return nil end
 
 	if isWatched then watchedFaction = factionIndex end
+	local standingText = _G['FACTION_STANDING_LABEL'..standingID]
 
 	local friendID, friendRep, friendMaxRep, _, _, _, friendTextLevel, friendThresh = GetFriendshipReputation(factionID)
 	if friendID ~= nil then
@@ -73,11 +75,14 @@ local function GetFactionData(factionIndex)
 			topValue = friendThresh + min( friendMaxRep - friendThresh, 8400 ) -- Magic number! Yay!
 		end
 		earnedValue = friendRep
+		standingText = friendTextLevel
 	end
-	--DEFAULT_CHAT_FRAME:AddMessage("Index = "..factionIndex.." name = "..name);	
+	
 	local faction = {
+		factionIndex = factionIndex,
 		name = name,
 		standingID = standingID,
+		standing = standingText,
 		min = bottomValue,
 		max = topValue,
 		value = earnedValue,
@@ -116,6 +121,7 @@ local function RefreshAllFactions()
 		i = i + 1
 	until i > 200
 	allFactions = factions
+	lib.callbacks:Fire("FACTIONS_LOADED")
 end
 
 local function UpdateFaction(factionIndex)
@@ -135,7 +141,6 @@ local function EnsureFactionsLoaded()
 	else
 		-- Refresh all factions and notify subscribers
 		RefreshAllFactions()
-		lib.callbacks:Fire("FACTIONS_LOADED")
 	end
 end
 
@@ -166,7 +171,7 @@ local function UpdateReputationChanges()
 
 	if #changes > 0 then
 		-- Notify subscribers
-		InformReputationsChanged(factionIndex,changes)
+		InformReputationsChanged(changes)
 	end
 	
 	timer = nil
@@ -187,6 +192,7 @@ function private.PLAYER_ENTERING_WORLD(event)
 	_G.C_Timer.After(5, function()
 		EnsureFactionsLoaded()
 		frame:RegisterEvent("COMBAT_TEXT_UPDATE")
+		frame:RegisterEvent("UPDATE_FACTION")
 	end)
 end
 
@@ -200,7 +206,6 @@ function private.COMBAT_TEXT_UPDATE(event, type, name, amount)
 			end
 		end
 	
-		-- Collect all gained reputation before notifying modules
 		if not reputationChanges[name] then
 			reputationChanges[name] = amount
 		else
@@ -215,30 +220,45 @@ function private.COMBAT_TEXT_UPDATE(event, type, name, amount)
 	end
 end
 
+function private.UPDATE_FACTION(event)
+	RefreshAllFactions()
+end
+
 ------------------------------------------------------------------------------
 -- API
 ------------------------------------------------------------------------------
+function lib:SetWatchedFaction(factionIndex)
+	
+	SetWatchedFactionIndex(factionIndex)
+	watchedFaction = factionIndex
+	lib.callbacks:Fire("REPUTATION_CHANGED", factionIndex)
+end
 
-function lib.GetWatchedFaction()
+function lib:GetWatchedFactionIndex()
 	return watchedFaction
 end
 
-function lib.GetReputationInfo(_, factionIndex)
+function lib:GetReputationInfo(_, factionIndex)
 	factionIndex = factionIndex or watchedFaction
-	return factionIndex, CopyTable(allFactions[factionIndex])
+	if allFactions[factionIndex] then
+		return factionIndex, CopyTable(allFactions[factionIndex])
+	else
+		return nil,nil
+	end
 end
 
-function lib.GetAllFactionsInfo()
+function lib:GetAllFactionsInfo()
 	return CopyTable(allFactions)
 end
 
-function lib.GetAllActiveFactionsInfo()
+function lib:GetAllActiveFactionsInfo()
 	local activeFactions = {}
 	for i=1,#allFactions do
 		if allFactions[i].isActive then
 			tinsert(activeFactions,allFactions[i])
 		end
 	end
+
 	if #activeFactions > 0 then
 		return CopyTable(activeFactions)
 	else
@@ -246,10 +266,10 @@ function lib.GetAllActiveFactionsInfo()
 	end
 end
 
-function lib.GetNumObtainedReputations()
+function lib:GetNumObtainedReputations()
 	return #allFactions
 end
 
-function lib.ForceUpdate()
+function lib:ForceUpdate()
 	RefreshAllFactions()
 end
