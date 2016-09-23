@@ -16,6 +16,7 @@ local watchedFaction = nil
 -- blizzard api
 local GetFactionInfo                = _G.GetFactionInfo
 local GetFriendshipReputation		= _G.GetFriendshipReputation
+local IsFactionInactive 			= _G.IsFactionInactive
 
 -- lua api
 local select   = _G.select
@@ -43,7 +44,6 @@ local function CopyTable(tbl)
 	return copy;
 end
 
-
 local function GetFactionIndex(factionName)
 	for i = 1, #allFactions do
 		local name, _, _, _, _, _, _, _, _, _, _, _, _ = GetLocalFactionInfo(i); --added 2 or 3 _, to the end
@@ -55,6 +55,41 @@ local function GetFLocalFactionInfo(factionIndex)
 	return allFactions[factionIndex]
 end
 
+
+local function GetFactionData(factionIndex)
+	-- name, description, standingId, bottomValue, topValue, earnedValue, atWarWith,
+	--  canToggleAtWar, isHeader, isCollapsed, hasRep, isWatched, isChild, factionID,
+	--  hasBonusRepGain, canBeLFGBonus = GetFactionInfo(factionIndex)
+	local name, _, standingID, bottomValue, topValue, earnedValue, _,
+		_, isHeader, isCollapsed, hasRep, isWatched, isChild, factionID = GetFactionInfo(factionIndex)
+	if not name then return nil end
+
+	if isWatched then watchedFaction = factionIndex end
+
+	local friendID, friendRep, friendMaxRep, _, _, _, friendTextLevel, friendThresh = GetFriendshipReputation(factionID)
+	if friendID ~= nil then
+		bottomValue = friendThresh
+		if nextThresh then
+			topValue = friendThresh + min( friendMaxRep - friendThresh, 8400 ) -- Magic number! Yay!
+		end
+		earnedValue = friendRep
+	end
+	--DEFAULT_CHAT_FRAME:AddMessage("Index = "..factionIndex.." name = "..name);	
+	local faction = {
+		name = name,
+		standingID = standingID,
+		min = bottomValue,
+		max = topValue,
+		value = earnedValue,
+		isHeader = isHeader,
+		isChild = isChild,
+		hasRep = hasRep,
+		isActive = not IsFactionInactive(factionIndex),
+		factionID = factionID,
+		friendID = friendID
+	}
+	return faction	
+end
 
 -- Refresh the list of known factions
 local function RefreshAllFactions()
@@ -70,36 +105,23 @@ local function RefreshAllFactions()
 			_, isHeader, isCollapsed, hasRep, isWatched, isChild, factionID = GetFactionInfo(i)
 		if not name or name == lastName and name ~= GUILD then break end
 
-		if isWatched then watchedFaction = factionID
-
-		local friendID, friendRep, friendMaxRep, _, _, _, friendTextLevel, friendThresh = GetFriendshipReputation(factionID)
-		if friendID ~= nil then
-			bottomValue = friendThresh
-			if nextThresh then
-				topValue = friendThresh + min( friendMaxRep - friendThresh, 8400 ) -- Magic number! Yay!
-			end
-			earnedValue = friendRep
-		end
 		lastName = name
-		tinsert(factions, {
-			name = name,
-			standingId = standingId,
-			min = bottomValue,
-			max = topValue,
-			value = earnedValue,
-			isHeader = isHeader,
-			isChild = isChild,
-			hasRep = hasRep,
-			isActive = not IsFactionInactive(i),
-			factionID = factionID,
-			friendID = friendID
-		})
+		local faction = GetFactionData(i)
+
+		if faction then 
+			tinsert(factions, faction)
+		end
+
 		if isCollapsed then ExpandFactionHeader(i) end
 		i = i + 1
 	until i > 200
-
 	allFactions = factions
 end
+
+local function UpdateFaction(factionIndex)
+	allFactions[factionIndex] = GetFactionData(factionIndex)
+end
+
 
 ------------------------------------------------------------------------------
 -- Ensure factions and guild info are loaded
@@ -126,9 +148,10 @@ local function UpdateReputationChanges()
 	-- Build sorted change table
 	local changes = {}
 	for name, amount in pairs(reputationChanges) do
-		-- Skip inactive factions
-		local factionIndex = self:GetFactionIndex(name)
-		if factionIndex and not IsFactionInactive(factionIndex) then
+
+		local factionIndex= self:GetFactionIndex(name)
+		if factionIndex then
+			UpdateFaction(factionIndex)
 			tinsert(changes, {
 				name = name,
 				amount = amount,
@@ -143,7 +166,7 @@ local function UpdateReputationChanges()
 
 	if #changes > 0 then
 		-- Notify subscribers
-		InformReputationsChanged(changes)
+		InformReputationsChanged(factionIndex,changes)
 	end
 	
 	timer = nil
@@ -152,9 +175,8 @@ end
 
 
 local function InformReputationsChanged(changes)
-	Debug("REPUTATIONS_CHANGED")
-	for _,amount,factionIndex do
-		lib.callbacks:Fire("REPUTATIONS_CHANGED", factionIndex,amount)
+	for _,_,factionIndex in changes do
+		lib.callbacks:Fire("REPUTATION_CHANGED", factionIndex)
 	end
 end
 
@@ -201,22 +223,31 @@ function lib.GetWatchedFaction()
 	return watchedFaction
 end
 
-function lib.GetReputationInfo(_, factionID)
-	return reputationID, CopyTable(allFactions[factionID])
+function lib.GetReputationInfo(_, factionIndex)
+	factionIndex = factionIndex or watchedFaction
+	return factionIndex, CopyTable(allFactions[factionIndex])
 end
 
-function lib.GetAllReputationsInfo()
+function lib.GetAllFactionsInfo()
 	return CopyTable(allFactions)
 end
 
-function lib.GetNumObtainedReputations()
-	local numReputations = 0
-	for reputation in pairs(allFactions) do
-		if tonumber(reputation) then
-			numReputations = numReputations + 1
+function lib.GetAllActiveFactionsInfo()
+	local activeFactions = {}
+	for i=1,#allFactions do
+		if allFactions[i].isActive then
+			tinsert(activeFactions,allFactions[i])
 		end
 	end
-	return numReputations
+	if #activeFactions > 0 then
+		return CopyTable(activeFactions)
+	else
+		return nil
+	end
+end
+
+function lib.GetNumObtainedReputations()
+	return #allFactions
 end
 
 function lib.ForceUpdate()
