@@ -13,5 +13,6 @@
 
 LibStub\LibStub.lua
 CallbackHandler-1.0\CallbackHandler-1.0.lua
+AceTimer-3.0\AceTimer-3.0.lua
 
 LibReputationData-1.0.lua
