@@ -1,4 +1,4 @@
-## Interface: 70000
+## Interface: 70100
 ## Title: Lib: ReputationData-1.0
 ## Notes: Provides data about all of the player's reputations.
 ## Author: joev
